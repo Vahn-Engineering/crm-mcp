@@ -109,6 +109,29 @@ class CrmClient:
             r.raise_for_status()
             return r.json()
 
+    async def get_business_context(self) -> dict | None:
+        """Fetch the live CRM vocabulary from a dedicated endpoint.
+
+        Returns None if vahn-crm-service does not implement the endpoint yet,
+        letting callers fall back to deriving values from existing endpoints.
+
+        Expected response shape:
+            {
+              "opportunityStages": [{"name": str, "order": int}, ...],
+              "opportunityStatuses": [str, ...],
+              "contactStages": [str, ...],
+              "contactTypes": [str, ...],
+              "statusCodes": [{"code": str, "label": str}, ...],
+              "reps": [{"name": str, "active": bool}, ...]
+            }
+        """
+        async with self._client() as c:
+            r = await c.get("/api/read/business-context")
+            if r.status_code == 404:
+                return None
+            r.raise_for_status()
+            return r.json()
+
     # -- Write endpoints --
 
     async def create_task(self, data: dict) -> dict:
