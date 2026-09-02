@@ -26,19 +26,29 @@ async def get_business_context() -> str:
     lines = ["**VAHN CRM — Business Context**", ""]
 
     # -- Pipeline --
+    # Prefer live stages: get_opportunities_by_stage returns stageRank straight
+    # from the SQL view, so it cannot drift from the authored mirror below.
     lines += ["## Opportunity pipeline (ordered)", ""]
-    counts = (live or {}).get("stageCounts", {})
-    for stage in domain.OPPORTUNITY_STAGES:
-        rank = f"[{stage['rank']}]" if stage["rank"] else "[—]"
-        count = counts.get(stage["name"])
-        count_str = f" — {count} open" if count is not None else ""
-        lost = "  (terminal, counts as Lost)" if stage.get("is_lost") else ""
-        lines.append(f"- {rank} **{stage['name']}**{count_str}{lost}")
+    live_stages = (live or {}).get("stages")
+    if live_stages:
+        for st in live_stages:
+            rank = f"[{st['rank']}]" if st.get("rank") else "[\u2014]"
+            lost = "  (terminal, counts as Lost)" if st.get("is_lost") else ""
+            noun = "opportunity" if st["count"] == 1 else "opportunities"
+            lines.append(f"- {rank} **{st['name']}** \u2014 {st['count']} {noun}{lost}")
+        stage_source = "live"
+    else:
+        for stage in domain.OPPORTUNITY_STAGES:
+            rank = f"[{stage['rank']}]" if stage["rank"] else "[\u2014]"
+            lost = "  (terminal, counts as Lost)" if stage.get("is_lost") else ""
+            lines.append(f"- {rank} **{stage['name']}**{lost}")
+        stage_source = "last known, from domain.py \u2014 may be stale"
+
     lines += [
         "",
-        f"> Ranks 1-7 run forward. Both Paying Customer stages share rank 7: "
-        f"Partial → Full Fleet is expansion of existing revenue, not pipeline "
-        f"progression. {domain.LOST_DRIFT_NOTE}",
+        f"> Stage list source: {stage_source}. Ranks 1-7 run forward. Both Paying "
+        f"Customer stages share rank 7: Partial \u2192 Full Fleet is expansion of "
+        f"existing revenue, not pipeline progression. {domain.LOST_DRIFT_NOTE}",
     ]
 
     # -- Statuses / contact stages / reps --
@@ -120,12 +130,16 @@ async def get_business_context() -> str:
 
 
 async def _fetch_live() -> tuple[dict | None, str]:
-    """Resolve live counts and the rep roster, best source first.
+    """Resolve the live stage list, status counts and rep roster, best source first.
 
-    1. /api/read/business-context — authoritative, includes zero-count stages.
-    2. pipeline-snapshot + team-summary — works with today's backend, but only
-       sees values that currently have records against them.
-    3. Nothing — service unreachable; the authored layer still renders.
+    1. /api/read/business-context — one call, and can include zero-count stages.
+    2. The reporting views — opportunities-by-stage carries stageRank and isLost
+       from SQL, so ordering is authoritative rather than mirrored from domain.py.
+       Only sees stages that currently hold records.
+    3. Nothing — the authored layer still renders, flagged as possibly stale.
+
+    Note: the rep roster comes from team-summary, not lsq-users, because the
+    /api/read/lsq-users endpoint is not live yet (see server.py).
     """
     try:
         ctx = await crm.get_business_context()
@@ -136,9 +150,18 @@ async def _fetch_live() -> tuple[dict | None, str]:
         reps = ctx.get("reps") or []
         if reps and isinstance(reps[0], dict):
             reps = [r["name"] for r in reps if r.get("active", True)]
+        stages = [
+            {
+                "name": st.get("stage") or st.get("name"),
+                "count": st.get("opportunities", 0),
+                "rank": st.get("stageRank"),
+                "is_lost": bool(st.get("isLost")),
+            }
+            for st in (ctx.get("stages") or [])
+        ]
         return (
             {
-                "stageCounts": ctx.get("stageCounts") or {},
+                "stages": stages,
                 "statusCounts": ctx.get("statusCounts") or {},
                 "reps": sorted(reps),
             },
@@ -146,24 +169,36 @@ async def _fetch_live() -> tuple[dict | None, str]:
         )
 
     now = datetime.now()
-    window_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=90)
+    window_start = now.replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ) - timedelta(days=90)
 
-    snapshot, team = await asyncio.gather(
-        crm.get_pipeline_snapshot(),
+    by_stage, by_status, team = await asyncio.gather(
+        crm.get_opportunities_by_stage(),
+        crm.get_opportunities_by_status(),
         crm.get_team_summary(window_start.isoformat(), now.isoformat()),
         return_exceptions=True,
     )
 
-    if isinstance(snapshot, Exception) and isinstance(team, Exception):
-        return None, "unavailable — vahn-crm-service unreachable"
+    if all(isinstance(r, Exception) for r in (by_stage, by_status, team)):
+        return None, "unavailable \u2014 vahn-crm-service unreachable"
 
     derived: dict = {}
-    if not isinstance(snapshot, Exception):
-        derived["stageCounts"] = snapshot.get("byStage", {})
-        derived["statusCounts"] = snapshot.get("byStatus", {})
+    if not isinstance(by_stage, Exception):
+        derived["stages"] = [
+            {
+                "name": st["stage"],
+                "count": st.get("opportunities", 0),
+                "rank": st.get("stageRank"),
+                "is_lost": bool(st.get("isLost")),
+            }
+            for st in by_stage.get("stages", [])
+        ]
+    if not isinstance(by_status, Exception):
+        derived["statusCounts"] = by_status.get("byStatus", {})
     if not isinstance(team, Exception):
         derived["reps"] = sorted(
             r["name"] for r in team.get("reps", []) if r.get("name")
         )
 
-    return derived, "derived from pipeline-snapshot + team-summary (90d)"
+    return derived, "reporting views + team-summary (90d)"
