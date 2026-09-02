@@ -1,5 +1,6 @@
 """Task analytics tools."""
 
+from vahn_mcp import domain
 from vahn_mcp.crm_client import crm
 from vahn_mcp.period import resolve_period
 
@@ -35,7 +36,7 @@ async def get_tasks_due_today(
 
 async def get_task_completion_rate(
     owner_name: str | None = None,
-    period: str = "this_week",
+    period: domain.Period = "this_week",
 ) -> str:
     """Get task completion rate — completed vs pending with percentage.
 

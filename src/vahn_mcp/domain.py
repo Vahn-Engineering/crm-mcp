@@ -2,20 +2,18 @@
 
 Two layers make up the business context exposed by `get_business_context`:
 
-  1. This file — meanings, ordering, and policy. A human must maintain it;
-     no endpoint can infer that fleet size is the proxy for deal importance,
-     or that TORG means what it means.
-  2. Live counts and rosters pulled from vahn-crm-service at call time.
+  1. This file — meanings, ordering, and policy a human must maintain.
+  2. Live data pulled from vahn-crm-service at call time: the stage list with
+     ranks, status counts, the rep roster, and (once the endpoint ships) the
+     activity catalogue.
 
-Values below were read from production (crm-mcp.vahn.in) on 2026-09-02, so the
-vocabulary is real. Items marked INFERRED are hypotheses that fit the data but
-have NOT been confirmed by anyone at VAHN — they render with that caveat
-attached. Confirm and delete the marker.
+Vocabulary was read from production on 2026-09-02. Business definitions were
+confirmed by VAHN on 2026-09-02 except where marked OPEN.
 """
 
 from typing import Literal
 
-# -- Closed enums (safe to enforce in tool signatures) --
+# -- Closed enums (enforced in tool signatures) --
 
 Severity = Literal["medium", "high", "critical"]
 Period = Literal["today", "this_week", "this_month", "last_week", "last_month"]
@@ -23,9 +21,8 @@ QualificationStatus = Literal["Qualified", "Not Qualified", "Closed"]
 OpportunityStatus = Literal["Open", "Won", "Lost"]
 
 # -- Opportunity pipeline --
-# stage_rank comes from a SQL view in vahn-crm-service (surfaced as `stageRank`
-# by get_opportunities_by_stage), which is the authoritative ordering. Mirrored
-# here so the context tool can explain ordering without a round trip.
+# Fallback only. get_opportunities_by_stage returns stageRank from a SQL view,
+# which is authoritative; this list is used when the service is unreachable.
 
 OPPORTUNITY_STAGES: list[dict] = [
     {"rank": 1, "name": "New Lead"},
@@ -39,13 +36,28 @@ OPPORTUNITY_STAGES: list[dict] = [
     {"rank": None, "name": "Closed - Lost", "is_lost": True},
 ]
 
-# Two distinct stages share rank 7: a customer can be paying on part of their
-# fleet or all of it. Partial -> Full is expansion, not pipeline progression.
-TERMINAL_WON_STAGES = ["Paying Customer – Partial Fleet", "Paying Customer – Full Fleet"]
+# CONFIRMED: the Partial/Full split is decided by the subscription payment the
+# customer has made — partial or full — not by truck count or contract type.
+FLEET_SPLIT_NOTE = (
+    "Partial vs Full Fleet reflects the subscription payment made: a customer "
+    "paying for part of their fleet sits at Partial, one paying for all of it at "
+    "Full. Both are rank 7, so Partial → Full is revenue expansion, not pipeline "
+    "progression."
+)
+
+# CONFIRMED: both Paying Customer stages are set by hand by sales users in LSQ.
+# No activity or automation drives them, so they lag reality by however long it
+# takes a rep to update the record.
+MANUAL_STAGE_NOTE = (
+    "Both Paying Customer stages are marked manually by sales users in LSQ. "
+    "Nothing automatic moves an opportunity into them, so treat the count as "
+    "'what reps have recorded', not 'who is actually paying'. A subscription "
+    "that started yesterday may not be reflected yet."
+)
 
 # 'Lost' is recorded in two places that can drift: opportunity_status = 'Lost'
 # and opportunity_stage = 'Closed - Lost'. vahn-crm-service exposes a derived
-# is_lost flag catching both; get_monitoring_opportunities_by_status uses it.
+# is_lost flag catching both.
 LOST_DRIFT_NOTE = (
     "Lost is stored twice — opportunity_status='Lost' and "
     "opportunity_stage='Closed - Lost' — and the two can disagree. Prefer "
@@ -53,54 +65,46 @@ LOST_DRIFT_NOTE = (
     "flag covering both, over raw status filtering."
 )
 
-CONTACT_STAGES = ["Database", "Prospect", "Qualified", "Customer", "Closed", "Unknown"]
+# -- Contact stages --
+# CONFIRMED: 'Database' and 'Unknown' are bad data, not meaningful stages.
+
+CONTACT_STAGES = ["Prospect", "Qualified", "Customer", "Closed"]
+CONTACT_STAGES_INVALID = ["Database", "Unknown"]
+CONTACT_STAGE_NOTE = (
+    "'Database' (119 leads) and 'Unknown' (577) are incorrect data, not real "
+    "stages. Exclude them from any breakdown you present, and never describe a "
+    "lead as being 'in the Database stage'. They are why contact-stage totals "
+    "do not reconcile against the opportunity count."
+)
 
 # -- Activity event codes --
-# `advances_to` is INFERRED from name alignment with the stage list above, not
-# confirmed. Nothing is known to advance a lead to either Paying Customer stage.
+# Fallback only. An activity catalogue endpoint is being added to
+# vahn-crm-service; once live it is authoritative and this list is a stopgap.
+# Code 202 is deliberately absent — it was never documented and the catalogue
+# will settle whether it exists.
 
-ACTIVITY_EVENTS: dict[str, dict] = {
-    "200": {
-        "name": "Customer Connect",
-        "meaning": "First outbound touch logged against the lead.",
-        "advances_to": "Contacted",
-        "inferred": True,
-    },
-    "201": {
-        "name": "Contacted - Lead Qualification",
-        "meaning": "Qualification call. Sets qualification_status and an outcome.",
-        "advances_to": "Qualified",
-        "inferred": True,
-    },
-    "202": {
-        "name": "UNKNOWN",
-        "meaning": "Code 202 sits inside the used range but is absent from this "
-                   "repo's docstrings and from the mcp-auth branch. Confirm with "
-                   "the LSQ admin whether it is in use before emitting it.",
-        "advances_to": None,
-        "inferred": False,
-    },
-    "203": {
-        "name": "Demo Done - Outcome",
-        "meaning": "A product demo was delivered; records the demo outcome.",
-        "advances_to": "Demo Done",
-        "inferred": True,
-    },
-    "204": {
-        "name": "Onboarded - Training",
-        "meaning": "Customer onboarding/training session completed.",
-        "advances_to": "Onboarded",
-        "inferred": True,
-    },
-    "205": {
-        "name": "First Transaction",
-        "meaning": "Lead's first billable transaction.",
-        "advances_to": "1st Transaction Done",
-        "inferred": True,
-    },
+ACTIVITY_EVENTS_FALLBACK: dict[str, str] = {
+    "200": "Customer Connect",
+    "201": "Contacted - Lead Qualification",
+    "203": "Demo Done - Outcome",
+    "204": "Onboarded - Training",
+    "205": "First Transaction",
 }
 
 DEFAULT_ACTIVITY_EVENT = "201"
+
+# CONFIRMED: stage changes are driven by automations configured inside LSQ,
+# keyed on the activity. The mapping lives in LSQ automation config, not here
+# and not in vahn-crm-service — so no code→stage table in this repo could be
+# trusted. Deliberately not modelled.
+ACTIVITY_AUTOMATION_NOTE = (
+    "Logging an activity can move an opportunity's stage, but only where an LSQ "
+    "automation is configured for that activity. The mapping lives in LSQ "
+    "automation config, which this server cannot read, and it can be changed "
+    "without any code change here. So: never predict which stage an activity "
+    "will produce, and never report that a lead advanced because you logged "
+    "one. Re-read the opportunity afterwards to see what actually happened."
+)
 
 # -- AI call dispositions --
 # Observed in production from elevenlabs_conversations. Not a closed set.
@@ -126,20 +130,27 @@ RISK_DEFINITIONS: dict[str, str] = {
                         "on existing revenue. See get_at_risk_customers.",
 }
 
+# OPEN: no strategic-account threshold is defined yet. 30 trucks has been
+# discussed as a candidate but is NOT in force — do not apply it.
+STRATEGIC_ACCOUNT_NOTE = (
+    "VAHN has no agreed fleet-size threshold for a 'strategic' or 'key' account "
+    "yet. Do not invent one, and do not treat any particular truck count as "
+    "significant. get_escalation_list ranks by raw fleet size only."
+)
+
 # -- Glossary --
-# UNANSWERED: these terms appear in tool docstrings and production data with no
-# definition anywhere in the codebase. An empty string renders as "needs definition".
 
 GLOSSARY: dict[str, str] = {
-    "TORG": "",
-    "Fuel Partner": "",
-    "Database (contact stage)": "",
-    "Closed (contact stage)": "",
-    "Unknown (contact stage)": "",
-    "Partial Fleet vs Full Fleet": "",
+    "TORG": "Truck Owner / Transporter — the core customer type: an operator who "
+            "owns or runs trucks.",
+    "Fuel Partner": "",  # OPEN — still undefined
+    "Partial Fleet": "Customer subscribing and paying for part of their fleet.",
+    "Full Fleet": "Customer subscribing and paying for their entire fleet.",
 }
 
 # -- Free-text fields with open value sets --
+# OPEN: full picklists not yet supplied. The activity catalogue endpoint may
+# cover these; until then only the values below are attested.
 
 OPEN_VALUE_FIELDS: dict[str, list[str]] = {
     "qualified_outcome": ["Follow-up Required"],
@@ -148,42 +159,53 @@ OPEN_VALUE_FIELDS: dict[str, list[str]] = {
 }
 
 # -- Thresholds --
-# CONFLICT: the same words mean different numbers across tools. Until VAHN
-# ratifies one set, the context tool reports each tool's own threshold rather
-# than implying a single company SLA.
+# CONFIRMED: 'critical' means 7+ days overdue. The severity bands in
+# list_overdue_followups are a finer scale whose top band is also labelled
+# 'critical' at >72h — that label is misaligned with the company definition and
+# should be renamed service-side. Until then, both are reported with their source.
+
+CRITICAL_DEFINITION = "7+ days overdue"
 
 THRESHOLDS: list[dict] = [
-    {"concept": "overdue severity: medium", "value": "< 24h past due",
-     "tool": "list_overdue_followups"},
-    {"concept": "overdue severity: high", "value": "24-72h past due",
-     "tool": "list_overdue_followups"},
-    {"concept": "overdue severity: critical", "value": "> 72h past due",
-     "tool": "list_overdue_followups"},
-    {"concept": "critically overdue task", "value": "7+ days past due",
-     "tool": "get_critical_overdue_tasks"},
-    {"concept": "stale opportunity", "value": "14+ days idle (default)",
-     "tool": "list_stale_opportunities"},
-    {"concept": "stale opportunity (monitoring)", "value": "30+ days idle (default)",
-     "tool": "get_stale_opportunities_monitor"},
-    {"concept": "escalation candidate", "value": "7+ days idle (default)",
-     "tool": "get_escalation_list"},
+    {"concept": "critical (company definition)", "value": "7+ days overdue",
+     "tool": "get_critical_overdue_tasks", "confirmed": True},
+    {"concept": "severity band: medium", "value": "< 24h past due",
+     "tool": "list_overdue_followups", "confirmed": False},
+    {"concept": "severity band: high", "value": "24-72h past due",
+     "tool": "list_overdue_followups", "confirmed": False},
+    {"concept": "severity band: critical", "value": "> 72h past due",
+     "tool": "list_overdue_followups", "confirmed": False},
+    {"concept": "stale: escalation sweep", "value": "7+ days idle",
+     "tool": "get_escalation_list", "confirmed": True},
+    {"concept": "stale: rep-facing", "value": "14+ days idle",
+     "tool": "list_stale_opportunities", "confirmed": True},
+    {"concept": "stale: manager monitoring", "value": "30+ days idle",
+     "tool": "get_stale_opportunities_monitor", "confirmed": True},
 ]
 
-THRESHOLD_CONFLICTS = [
-    "'Critical' means two different things: >72h past due in "
-    "list_overdue_followups severity, but 7+ days past due in "
-    "get_critical_overdue_tasks. Always say which tool a critical count came from.",
-    "'Stale' has three defaults — 7, 14 and 30 days idle — across "
-    "get_escalation_list, list_stale_opportunities and "
-    "get_stale_opportunities_monitor. None is a ratified company SLA. State the "
-    "threshold whenever you report a stale count.",
-]
+# CONFIRMED: the three stale thresholds are intentional and serve different
+# audiences. Not a conflict — but still must be labelled in output.
+STALE_NOTE = (
+    "The 7 / 14 / 30-day stale thresholds are intentional and serve different "
+    "audiences: 7 for the escalation sweep, 14 rep-facing, 30 for manager "
+    "monitoring. Always say which threshold a stale count used, so a number is "
+    "never ambiguous."
+)
+
+SEVERITY_MISMATCH_NOTE = (
+    "VAHN defines critical as 7+ days overdue. The top severity band in "
+    "list_overdue_followups is also called 'critical' but triggers at >72h "
+    "(3 days), so it over-reports by the company definition. When quoting a "
+    "critical count, use get_critical_overdue_tasks, or say explicitly that the "
+    "severity band uses a lower bar."
+)
+
+# -- Data quality --
 
 DATA_QUALITY_NOTES = [
-    "Lead status_code is effectively unpopulated in production: ~94% of leads "
-    "are code '0' and the rest Unknown. get_leads_by_status_code cannot "
-    "meaningfully segment anything — do not use it to answer questions about "
-    "lead status; use contact stage instead.",
-    "~6% of leads have contact stage 'Unknown', so contact-stage totals will "
-    "not reconcile to the opportunity count.",
+    "Lead status_code reads ~94% '0' because the wrong column is being read — "
+    "the field is not genuinely empty. Until vahn-crm-service is corrected, "
+    "get_leads_by_status_code returns meaningless buckets: do not use it to "
+    "answer questions about lead status, and use contact stage instead.",
+    CONTACT_STAGE_NOTE,
 ]

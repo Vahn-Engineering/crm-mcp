@@ -329,6 +329,36 @@ class CrmClient:
             r.raise_for_status()
             return r.json()
 
+    async def get_activity_catalogue(self) -> dict | None:
+        """Fetch the activity event catalogue (codes, names, picklist values).
+
+        Returns None if vahn-crm-service does not implement the endpoint yet,
+        letting callers fall back to the hardcoded set in domain.py.
+
+        Expected response shape:
+            {
+              "activities": [
+                {
+                  "code": "201",
+                  "name": "Contacted - Lead Qualification",
+                  "active": true,
+                  "fields": {
+                    "qualificationStatus": ["Qualified", "Not Qualified", "Closed"],
+                    "qualifiedOutcome": ["Follow-up Required", ...],
+                    "notQualifiedOutcome": ["Not Interested", ...],
+                    "typeOfConnect": ["Phone call", "In Person Meet", ...]
+                  }
+                }, ...
+              ]
+            }
+        """
+        async with self._client() as c:
+            r = await c.get("/api/read/activity-catalogue")
+            if r.status_code == 404:
+                return None
+            r.raise_for_status()
+            return r.json()
+
     # -- Write endpoints --
 
     async def create_task(self, data: dict) -> dict:

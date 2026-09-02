@@ -1,5 +1,6 @@
 """Write tools — create tasks, log activities, fetch from LSQ directly."""
 
+from vahn_mcp import domain
 from vahn_mcp.crm_client import crm
 from vahn_mcp.lsq_client import lsq
 
@@ -42,7 +43,7 @@ async def log_activity(
     prospect_id: str,
     activity_event: str = "201",
     notes: str | None = None,
-    qualification_status: str | None = None,
+    qualification_status: domain.QualificationStatus | None = None,
     qualified_outcome: str | None = None,
     not_qualified_outcome: str | None = None,
     type_of_connect: str | None = None,

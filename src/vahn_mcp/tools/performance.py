@@ -1,11 +1,12 @@
 """Performance and analytics tools."""
 
+from vahn_mcp import domain
 from vahn_mcp.crm_client import crm
 from vahn_mcp.period import resolve_period
 
 
 async def get_new_opportunities_count(
-    period: str = "this_week",
+    period: domain.Period = "this_week",
 ) -> str:
     """Get the count of new opportunities created in a time period.
 
@@ -23,7 +24,7 @@ async def get_new_opportunities_count(
 
 
 async def get_won_opportunities(
-    period: str = "this_week",
+    period: domain.Period = "this_week",
 ) -> str:
     """Get opportunities won in a time period.
 
@@ -87,7 +88,7 @@ async def get_workload_distribution() -> str:
 
 
 async def get_call_outcome_breakdown(
-    period: str = "this_week",
+    period: domain.Period = "this_week",
 ) -> str:
     """Get a breakdown of AI/bot call outcomes by disposition.
 

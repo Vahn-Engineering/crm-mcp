@@ -1,11 +1,12 @@
 """Team summary tool."""
 
+from vahn_mcp import domain
 from vahn_mcp.crm_client import crm
 from vahn_mcp.period import resolve_period
 
 
 async def get_team_summary(
-    period: str = "this_week",
+    period: domain.Period = "this_week",
 ) -> str:
     """Get a summary of all reps' activity — tasks created/completed, overdue count, activities logged.
 

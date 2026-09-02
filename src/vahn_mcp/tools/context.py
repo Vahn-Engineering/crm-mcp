@@ -9,46 +9,45 @@ from vahn_mcp.crm_client import crm
 
 async def get_business_context() -> str:
     """Get VAHN's CRM vocabulary and sales flow: the ordered opportunity pipeline,
-    valid statuses and contact stages, activity event codes and what each one means,
-    the rep roster, risk definitions, and the threshold each tool uses for "stale"
-    and "overdue".
+    valid statuses and contact stages, the activity event catalogue, the rep roster,
+    risk definitions, glossary terms like TORG, and the threshold each tool uses for
+    "stale" and "overdue".
 
     Call this FIRST in any new conversation, before any other tool. Tool names alone
     do not tell you which stage values are valid, which direction the pipeline runs,
-    what internal acronyms like "TORG" refer to, or which reps exist — guessing those
-    produces empty result sets that look like real answers. It is read-only and cheap.
+    what internal acronyms mean, or which reps exist — guessing those produces empty
+    result sets that look like real answers. It is read-only and cheap.
 
     Re-call it if the user mentions a stage, status, acronym, product, team, or rep
     name you have not already resolved against it.
     """
-    live, source = await _fetch_live()
+    live, source, catalogue = await _fetch_live()
 
     lines = ["**VAHN CRM — Business Context**", ""]
 
     # -- Pipeline --
-    # Prefer live stages: get_opportunities_by_stage returns stageRank straight
-    # from the SQL view, so it cannot drift from the authored mirror below.
     lines += ["## Opportunity pipeline (ordered)", ""]
     live_stages = (live or {}).get("stages")
     if live_stages:
         for st in live_stages:
-            rank = f"[{st['rank']}]" if st.get("rank") else "[\u2014]"
-            lost = "  (terminal, counts as Lost)" if st.get("is_lost") else ""
+            rank = f"[{st['rank']}]" if st.get("rank") else "[—]"
             noun = "opportunity" if st["count"] == 1 else "opportunities"
-            lines.append(f"- {rank} **{st['name']}** \u2014 {st['count']} {noun}{lost}")
+            lost = "  (terminal, counts as Lost)" if st.get("is_lost") else ""
+            lines.append(f"- {rank} **{st['name']}** — {st['count']} {noun}{lost}")
         stage_source = "live"
     else:
         for stage in domain.OPPORTUNITY_STAGES:
-            rank = f"[{stage['rank']}]" if stage["rank"] else "[\u2014]"
+            rank = f"[{stage['rank']}]" if stage["rank"] else "[—]"
             lost = "  (terminal, counts as Lost)" if stage.get("is_lost") else ""
             lines.append(f"- {rank} **{stage['name']}**{lost}")
-        stage_source = "last known, from domain.py \u2014 may be stale"
+        stage_source = "last known, from domain.py — may be stale"
 
     lines += [
         "",
-        f"> Stage list source: {stage_source}. Ranks 1-7 run forward. Both Paying "
-        f"Customer stages share rank 7: Partial \u2192 Full Fleet is expansion of "
-        f"existing revenue, not pipeline progression. {domain.LOST_DRIFT_NOTE}",
+        f"> Stage list source: {stage_source}.",
+        f"> {domain.FLEET_SPLIT_NOTE}",
+        f"> {domain.MANUAL_STAGE_NOTE}",
+        f"> {domain.LOST_DRIFT_NOTE}",
     ]
 
     # -- Statuses / contact stages / reps --
@@ -60,7 +59,9 @@ async def get_business_context() -> str:
     else:
         lines.append("- **Opportunity statuses:** Open, Won, Lost")
 
-    lines.append(f"- **Contact stages:** {', '.join(domain.CONTACT_STAGES)}")
+    lines.append(f"- **Contact stages (valid):** {', '.join(domain.CONTACT_STAGES)}")
+    lines.append(f"- **Contact stages (bad data — exclude):** "
+                 f"{', '.join(domain.CONTACT_STAGES_INVALID)}")
 
     reps = (live or {}).get("reps")
     if reps:
@@ -72,48 +73,59 @@ async def get_business_context() -> str:
             "an unrecognised name returns an empty list that looks identical."
         )
 
-    # -- Activity codes --
+    # -- Activity catalogue --
     lines += ["", "## Activity event codes", ""]
-    for code, meta in domain.ACTIVITY_EVENTS.items():
-        default = "  _(default)_" if code == domain.DEFAULT_ACTIVITY_EVENT else ""
-        lines.append(f"- **{code} — {meta['name']}**{default}: {meta['meaning']}")
-        if meta.get("advances_to"):
-            tag = " _(INFERRED, unconfirmed)_" if meta.get("inferred") else ""
-            lines.append(f"    Expected to advance opportunity to: "
-                         f"**{meta['advances_to']}**{tag}")
-    lines += [
-        "",
-        "> Stage transitions above are inferred from name alignment, not confirmed "
-        "by VAHN. Nothing is known to advance a lead into either Paying Customer "
-        "stage. After logging an activity, re-read the opportunity's stage rather "
-        "than assuming it moved.",
-    ]
+    if catalogue:
+        for act in catalogue:
+            state = "" if act.get("active", True) else "  _(inactive — do not emit)_"
+            default = ("  _(default)_" if act["code"] == domain.DEFAULT_ACTIVITY_EVENT
+                       else "")
+            lines.append(f"- **{act['code']} — {act['name']}**{default}{state}")
+            for field, values in (act.get("fields") or {}).items():
+                lines.append(f"    `{field}`: {', '.join(values)}")
+        lines += ["", "> Source: live activity catalogue. These picklist values are "
+                      "authoritative — use them verbatim."]
+    else:
+        for code, name in domain.ACTIVITY_EVENTS_FALLBACK.items():
+            default = ("  _(default)_" if code == domain.DEFAULT_ACTIVITY_EVENT
+                       else "")
+            lines.append(f"- **{code} — {name}**{default}")
+        lines += [
+            "",
+            "> Source: fallback list in domain.py — the activity catalogue endpoint "
+            "is not live yet. This list is incomplete: code 202 is undocumented and "
+            "may or may not exist, and the picklist values below are partial. Prefer "
+            "echoing a value the user supplied over inventing one.",
+        ]
+        lines.append("")
+        for field, values in domain.OPEN_VALUE_FIELDS.items():
+            lines.append(f"- **{field}:** {', '.join(values)} — attested values only.")
+
+    lines += ["", f"> {domain.ACTIVITY_AUTOMATION_NOTE}"]
 
     # -- Risk definitions --
     lines += ["", "## Risk and escalation definitions", ""]
     for term, definition in domain.RISK_DEFINITIONS.items():
         lines.append(f"- **{term}:** {definition}")
+    lines += ["", f"> {domain.STRATEGIC_ACCOUNT_NOTE}"]
 
     # -- Thresholds --
-    lines += ["", "## Thresholds (per tool — not a single company SLA)", ""]
-    lines.append(f"| Concept | Threshold | Tool |")
-    lines.append(f"|---|---|---|")
+    lines += ["", "## Thresholds", ""]
+    lines.append("| Concept | Threshold | Tool | Confirmed |")
+    lines.append("|---|---|---|---|")
     for t in domain.THRESHOLDS:
-        lines.append(f"| {t['concept']} | {t['value']} | `{t['tool']}` |")
-    lines.append("")
-    for conflict in domain.THRESHOLD_CONFLICTS:
-        lines.append(f"> {conflict}")
-        lines.append("")
+        mark = "yes" if t["confirmed"] else "**no**"
+        lines.append(f"| {t['concept']} | {t['value']} | `{t['tool']}` | {mark} |")
+    lines += [
+        "",
+        f"> {domain.STALE_NOTE}",
+        "",
+        f"> {domain.SEVERITY_MISMATCH_NOTE}",
+    ]
 
     # -- Call dispositions --
-    lines += ["## AI call dispositions (observed, not a closed set)", ""]
+    lines += ["", "## AI call dispositions (observed, not a closed set)", ""]
     lines.append(", ".join(domain.CALL_DISPOSITIONS_OBSERVED))
-
-    # -- Open-valued fields --
-    lines += ["", "## Fields with open value sets", ""]
-    for field, values in domain.OPEN_VALUE_FIELDS.items():
-        lines.append(f"- **{field}:** {', '.join(values)} — attested values only. "
-                     f"Prefer echoing a value the user supplied over inventing one.")
 
     # -- Glossary --
     lines += ["", "## Glossary", ""]
@@ -129,18 +141,24 @@ async def get_business_context() -> str:
     return "\n".join(lines)
 
 
-async def _fetch_live() -> tuple[dict | None, str]:
-    """Resolve the live stage list, status counts and rep roster, best source first.
+async def _fetch_live() -> tuple[dict | None, str, list | None]:
+    """Resolve live vocabulary and the activity catalogue, best source first.
 
-    1. /api/read/business-context — one call, and can include zero-count stages.
-    2. The reporting views — opportunities-by-stage carries stageRank and isLost
-       from SQL, so ordering is authoritative rather than mirrored from domain.py.
-       Only sees stages that currently hold records.
-    3. Nothing — the authored layer still renders, flagged as possibly stale.
+    Stage/status/rep chain:
+      1. /api/read/business-context — one call, can include zero-count stages.
+      2. The reporting views — opportunities-by-stage carries stageRank and
+         isLost from SQL, so ordering is authoritative rather than mirrored.
+         Only sees stages that currently hold records.
+      3. Nothing — the authored layer renders, flagged as possibly stale.
 
-    Note: the rep roster comes from team-summary, not lsq-users, because the
-    /api/read/lsq-users endpoint is not live yet (see server.py).
+    The activity catalogue resolves independently: a 404 or an error just means
+    the fallback list in domain.py is used.
+
+    Note: the rep roster comes from team-summary, not lsq-users, because
+    /api/read/lsq-users is not live yet (see server.py).
     """
+    catalogue_task = asyncio.create_task(_fetch_catalogue())
+
     try:
         ctx = await crm.get_business_context()
     except Exception:
@@ -166,6 +184,7 @@ async def _fetch_live() -> tuple[dict | None, str]:
                 "reps": sorted(reps),
             },
             "/api/read/business-context",
+            await catalogue_task,
         )
 
     now = datetime.now()
@@ -181,7 +200,7 @@ async def _fetch_live() -> tuple[dict | None, str]:
     )
 
     if all(isinstance(r, Exception) for r in (by_stage, by_status, team)):
-        return None, "unavailable \u2014 vahn-crm-service unreachable"
+        return None, "unavailable — vahn-crm-service unreachable", await catalogue_task
 
     derived: dict = {}
     if not isinstance(by_stage, Exception):
@@ -201,4 +220,15 @@ async def _fetch_live() -> tuple[dict | None, str]:
             r["name"] for r in team.get("reps", []) if r.get("name")
         )
 
-    return derived, "reporting views + team-summary (90d)"
+    return derived, "reporting views + team-summary (90d)", await catalogue_task
+
+
+async def _fetch_catalogue() -> list | None:
+    """Fetch the activity catalogue, or None if unavailable."""
+    try:
+        data = await crm.get_activity_catalogue()
+    except Exception:
+        return None
+    if not data:
+        return None
+    return data.get("activities") or None

@@ -42,6 +42,7 @@ async def get_lead_timeline(
         f"  Type: {contact.get('contactType', '-')}",
         f"  Stage: {contact.get('contactStage', '-')}",
         f"  Onboarded: {contact.get('isOnboarded', False)}",
+        f"  Prospect ID: {prospect_id}",
         "",
     ]
 

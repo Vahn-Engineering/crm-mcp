@@ -1,12 +1,13 @@
 """Rep scorecard tool."""
 
+from vahn_mcp import domain
 from vahn_mcp.crm_client import crm
 from vahn_mcp.period import resolve_period
 
 
 async def get_rep_scorecard(
     rep_name: str,
-    period: str = "this_week",
+    period: domain.Period = "this_week",
 ) -> str:
     """Get a sales rep's performance scorecard.
 

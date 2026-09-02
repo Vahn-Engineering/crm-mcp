@@ -41,7 +41,8 @@ async def search_leads(
         lines.append(
             f"- **{c.get('company', 'Unknown')}** ({c.get('contactType', '-')}){onboarded}\n"
             f"  Phone: {c.get('phone', '-')}, Stage: {c.get('contactStage', '-')}, "
-            f"City: {c.get('city', '-')}"
+            f"City: {c.get('city', '-')}\n"
+            f"  Prospect ID: {c.get('prospectId', '-')}"
         )
 
     return "\n".join(lines)
