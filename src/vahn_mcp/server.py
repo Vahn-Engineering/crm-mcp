@@ -43,6 +43,7 @@ from vahn_mcp.tools.records import (
     get_lead_record,
 )
 from vahn_mcp.tools.users import get_user
+from vahn_mcp.tools.resolve import resolve_leads
 from vahn_mcp.tools.followups import list_overdue_followups
 from vahn_mcp.tools.scorecard import get_rep_scorecard
 from vahn_mcp.tools.opportunities import list_stale_opportunities, get_pipeline_snapshot
@@ -296,6 +297,7 @@ mcp.tool()(search_whatsapp_events)
 mcp.tool()(search_opportunities)
 mcp.tool()(search_tasks)
 mcp.tool()(get_lead_record)
+mcp.tool()(resolve_leads)
 mcp.tool()(get_user)
 
 # -- Monitoring --

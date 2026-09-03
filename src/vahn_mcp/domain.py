@@ -62,11 +62,19 @@ def normalise_stage(value: str | None) -> str | None:
         return (v.replace("\u2013", "-").replace("\u2014", "-")
                  .replace("  ", " ").strip().casefold())
 
-    target = key(value)
-    for stage in OPPORTUNITY_STAGES:
-        if key(stage["name"]) == target:
-            return stage["name"]
-    return value
+    # Categorical filters accept a comma-separated list, so normalise each part
+    # independently — otherwise a two-stage filter would never match the list.
+    parts = value.split(",")
+    fixed = []
+    for part in parts:
+        target = key(part)
+        for stage in OPPORTUNITY_STAGES:
+            if key(stage["name"]) == target:
+                fixed.append(stage["name"])
+                break
+        else:
+            fixed.append(part.strip())
+    return ",".join(fixed)
 
 
 # CONFIRMED: the Partial/Full split is decided by the subscription payment the

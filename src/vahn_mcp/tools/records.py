@@ -4,6 +4,10 @@ For aggregate questions prefer the existing report tools (get_pipeline_snapshot,
 get_team_summary, get_rep_scorecard, list_overdue_followups) — they answer in one
 call. Use these when you need a filter combination that has no report, one
 specific record, or to page through a result set.
+
+Categorical filters take a comma-separated list, ORed. Combined with resolve_leads,
+a question about many leads is two calls total rather than one per lead: resolve the
+batch, then pass the prospect IDs as a single comma-separated filter. Never loop.
 """
 
 from vahn_mcp import domain
@@ -31,10 +35,12 @@ async def search_opportunities(
     get_opportunities_by_stage or get_pipeline_snapshot instead — one call, no paging.
 
     Args:
-        stage: Pipeline stage. Copy from get_business_context.
-        status: "Open", "Won", or "Lost".
-        prospect_id: Restrict to one lead's opportunities.
-        owner_id: LSQ user id, not a display name.
+        stage: Pipeline stage. Copy from get_business_context. Accepts a
+            comma-separated list, ORed: "Qualified,Demo Done".
+        status: "Open", "Won", or "Lost". Comma-separated list allowed.
+        prospect_id: Restrict to specific leads. Comma-separated list allowed, so
+            a batch from resolve_leads goes in one call: "id1,id2,id3".
+        owner_id: LSQ user id, not a display name. Comma-separated list allowed.
         created_from: ISO local date-time, e.g. "2026-08-01T00:00:00".
         created_to: Same format.
         modified_from: Window on last modification.
@@ -103,14 +109,17 @@ async def search_tasks(
     one call. Use this for filter combinations it does not cover.
 
     Args:
-        status: e.g. "Pending", "Completed".
-        owner_name: Display name, exact and case-sensitive.
-        owner_id: LSQ user id.
-        task_type: e.g. "Call".
-        priority: e.g. "High".
-        prospect_id: Restrict to one lead. Note this excludes tasks whose lead
-            was never mirrored locally — those remain reachable by other filters.
-        opportunity_id: Restrict to one opportunity.
+        status: e.g. "Pending", "Completed". Comma-separated list allowed, ORed.
+        owner_name: Display name, exact and case-sensitive. List allowed, so
+            "Ravi Sharma,Priya S" covers both reps in one call.
+        owner_id: LSQ user id. Comma-separated list allowed.
+        task_type: e.g. "Call". Comma-separated list allowed.
+        priority: e.g. "High,Medium". Comma-separated list allowed.
+        prospect_id: Restrict to specific leads. Comma-separated list allowed, so
+            a batch from resolve_leads goes in one call: "id1,id2,id3". Note this
+            excludes tasks whose lead was never mirrored locally — those remain
+            reachable by other filters.
+        opportunity_id: Restrict to opportunities. Comma-separated list allowed.
         overdue: Tri-state. true = not completed AND past due; false =
             everything else; omitting it applies no due-date filter at all.
             Omitted is not the same as false.

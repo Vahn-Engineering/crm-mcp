@@ -317,6 +317,14 @@ class CrmClient:
             r.raise_for_status()
             return r.json()
 
+    async def resolve_leads(self, payload: dict) -> dict:
+        """Batch-resolve phones/names/companies to leads. One query regardless of
+        batch size; 100 values max across all three arrays."""
+        async with self._client() as c:
+            r = await c.post("/api/read/leads/resolve", json=payload)
+            r.raise_for_status()
+            return r.json()
+
     async def list_opportunities(self, **filters) -> dict:
         async with self._client() as c:
             r = await c.get("/api/read/opportunities", params=self._params(**filters))
