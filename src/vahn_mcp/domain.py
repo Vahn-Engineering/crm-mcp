@@ -59,8 +59,9 @@ def normalise_stage(value: str | None) -> str | None:
         return value
 
     def key(v: str) -> str:
-        return (v.replace("\u2013", "-").replace("\u2014", "-")
-                 .replace("  ", " ").strip().casefold())
+        # Neutralise dash variants, collapse any run of whitespace, fold case.
+        flat = v.replace("\u2013", "-").replace("\u2014", "-")
+        return " ".join(flat.split()).casefold()
 
     # Categorical filters accept a comma-separated list, so normalise each part
     # independently — otherwise a two-stage filter would never match the list.

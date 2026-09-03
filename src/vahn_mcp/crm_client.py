@@ -74,39 +74,11 @@ class CrmClient:
             r.raise_for_status()
             return r.json()
 
-    async def get_lead_timeline(self, prospect_id: str) -> dict:
-        async with self._client() as c:
-            r = await c.get(f"/api/read/lead-timeline/{prospect_id}")
-            r.raise_for_status()
-            return r.json()
-
     async def get_team_summary(self, start: str, end: str) -> dict:
         async with self._client() as c:
             r = await c.get(
                 "/api/read/team-summary", params={"start": start, "end": end}
             )
-            r.raise_for_status()
-            return r.json()
-
-    async def search_leads(
-        self,
-        contact_type: str | None = None,
-        stage: str | None = None,
-        phone: str | None = None,
-        company: str | None = None,
-        limit: int = 50,
-    ) -> dict:
-        params: dict = {"limit": limit}
-        if contact_type:
-            params["contactType"] = contact_type
-        if stage:
-            params["stage"] = stage
-        if phone:
-            params["phone"] = phone
-        if company:
-            params["company"] = company
-        async with self._client() as c:
-            r = await c.get("/api/read/search-leads", params=params)
             r.raise_for_status()
             return r.json()
 
@@ -331,21 +303,9 @@ class CrmClient:
             r.raise_for_status()
             return r.json()
 
-    async def get_opportunity(self, opportunity_id: str) -> dict:
-        async with self._client() as c:
-            r = await c.get(f"/api/read/opportunities/{opportunity_id}")
-            r.raise_for_status()
-            return r.json()
-
     async def list_tasks(self, **filters) -> dict:
         async with self._client() as c:
             r = await c.get("/api/read/tasks", params=self._params(**filters))
-            r.raise_for_status()
-            return r.json()
-
-    async def get_task(self, task_id: str) -> dict:
-        async with self._client() as c:
-            r = await c.get(f"/api/read/tasks/{task_id}")
             r.raise_for_status()
             return r.json()
 

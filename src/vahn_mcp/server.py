@@ -213,6 +213,61 @@ Use only picklist values from the activity catalogue in get_business_context. Wh
 catalogue is unavailable, echo a value the user supplied rather than inventing one — a
 wrong value written to LeadSquared is worse than a missing one.
 
+## Which tool answers which question
+
+Several tools overlap. Pick from this table rather than improvising — the same
+question routed two ways gives two different numbers, and reads as inconsistency.
+
+**Tasks and follow-ups**
+| Question | Tool |
+|---|---|
+| Who is behind on follow-ups? | `list_overdue_followups` (bucketed by severity) |
+| What is critically overdue? | `get_critical_overdue_tasks` (7+ days — VAHN's bar) |
+| How much is overdue, in total? | `get_overdue_tasks_summary` |
+| What is due today? | `get_tasks_due_today` |
+| Any other task filter, or paging | `search_tasks` |
+
+**Opportunities**
+| Question | Tool |
+|---|---|
+| How many per stage? | `get_opportunities_by_stage` (carries stage order) |
+| Per stage, for one owner? | `get_pipeline_snapshot` |
+| How many open / won / lost? | `get_opportunities_by_status` |
+| What is stale, for a rep? | `list_stale_opportunities` (14 days) |
+| What is stale, for a manager? | `get_stale_opportunities_monitor` (30 days) |
+| What should be escalated? | `get_escalation_list` (7 days, ranked by fleet size) |
+| What closed / churned in a window? | `get_stage_changes` (`to_stage` / `from_stage`) |
+| How long has this deal sat in each stage? | `get_opportunity_stage_history` |
+| Any other filter, or paging | `search_opportunities` |
+
+**Leads**
+| Question | Tool |
+|---|---|
+| Map a batch of phones or names to leads | `resolve_leads` — never loop a search |
+| Find leads by company, type, stage, source | `search_leads` |
+| Everything on one lead's record | `get_lead_record` |
+| One lead's history, merged and time-ordered | `get_lead_timeline` |
+| Which leads have nobody following up? | `get_leads_without_followup` |
+
+**Calls**
+| Question | Tool |
+|---|---|
+| What was said, or how a call went | `search_calls` / `get_call_details` |
+| Aggregate outcomes only | `get_call_outcome_breakdown` (one call, no paging) |
+| Why has this lead not been called? | `get_call_queue` |
+
+**People**
+| Question | Tool |
+|---|---|
+| How is one rep doing? | `get_rep_scorecard` |
+| How is the team doing? | `get_team_summary` |
+| Is a rep name real, and what is their load? | `get_user` (accepts id or email) |
+| Who is overloaded? | `get_workload_distribution` |
+
+Two rules that override the table: prefer a report tool over assembling the same
+answer from record searches, and when you do use a record search, say which filters
+and thresholds you applied.
+
 ## Paging and empty results
 
 List tools page: `size` defaults to 50 and is hard-capped at 200, silently clamped

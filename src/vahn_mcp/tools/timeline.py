@@ -29,17 +29,36 @@ async def get_lead_timeline(
         limit: Max merged entries, newest first. Default 100, capped at 500.
     """
     if not prospect_id:
-        if lead_name:
-            search = await crm.search_leads(company=lead_name, limit=1)
-        elif phone:
-            search = await crm.search_leads(phone=phone, limit=1)
-        else:
+        if not (lead_name or phone):
             return "Please provide a lead_name, prospect_id, or phone number."
 
-        contacts = search.get("contacts", [])
-        if not contacts:
-            return f"No lead found matching '{lead_name or phone}'."
-        prospect_id = contacts[0]["prospectId"]
+        payload = {"phones": [phone]} if phone else {"companies": [lead_name]}
+        try:
+            resolved = await crm.resolve_leads(payload)
+        except Exception as e:
+            return api_error(e)
+
+        results = resolved.get("results") or []
+        hit = results[0] if results else None
+        query = phone or lead_name
+
+        if not hit or hit.get("status") == "not_found":
+            return f"No lead found matching '{query}'."
+
+        # Picking the first of several matches would attribute a whole timeline
+        # to the wrong company, silently. Ask instead.
+        if hit.get("status") == "ambiguous":
+            cands = hit.get("candidates") or []
+            lines = [f"'{query}' matches {hit.get('matchCount', len(cands))} leads — "
+                     f"say which one you mean:", ""]
+            for c in cands:
+                lines.append(f"- {c.get('company', 'Unknown')}  "
+                             f"`{c.get('prospectId', '-')}`")
+            return "\n".join(lines)
+
+        prospect_id = (hit.get("lead") or {}).get("prospectId")
+        if not prospect_id:
+            return f"Could not resolve '{query}' to a lead."
 
     try:
         data = await crm.get_lead_timeline_merged(
