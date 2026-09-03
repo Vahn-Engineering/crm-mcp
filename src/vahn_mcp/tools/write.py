@@ -1,8 +1,12 @@
-"""Write tools — create tasks, log activities, fetch from LSQ directly."""
+"""Write tools — create tasks and log activities via vahn-crm-service.
+
+Everything here goes through the CRM service, which queues all outbound
+LeadSquared traffic through a single rate limiter. This module must never
+call LeadSquared directly.
+"""
 
 from vahn_mcp import domain
 from vahn_mcp.crm_client import crm
-from vahn_mcp.lsq_client import lsq
 
 
 async def create_followup_task(
@@ -90,28 +94,3 @@ async def log_activity(
         return f"Activity logged successfully for prospect {prospect_id}."
     else:
         return f"Failed to log activity: {result.get('error', 'Unknown error')}"
-
-
-async def get_lead_details_from_lsq(prospect_id: str) -> str:
-    """Fetch full lead details directly from LeadSquared API. Use this for fields not synced to the CRM database (Notes, Lead Score, Tags, etc).
-
-    Args:
-        prospect_id: The LeadSquared Prospect ID.
-    """
-    try:
-        data = await lsq.get_lead_by_id(prospect_id)
-
-        if not data:
-            return f"No lead found in LeadSquared with ID: {prospect_id}"
-
-        # Format key fields
-        lines = [f"**Lead Details (direct from LeadSquared)**", ""]
-
-        # Show all fields, grouped sensibly
-        for key, value in sorted(data.items()):
-            if value and str(value).strip() and str(value) != "null":
-                lines.append(f"  {key}: {value}")
-
-        return "\n".join(lines)
-    except Exception as e:
-        return f"Error fetching from LeadSquared: {e}"

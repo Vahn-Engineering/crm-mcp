@@ -160,13 +160,13 @@ ACTIVITY_AUTOMATION_NOTE = (
 # -- Activities are a live LSQ relay, not a local read --
 
 ACTIVITY_RELAY_NOTE = (
-    "Activity reads relay live to LeadSquared. They are slow relative to every "
-    "other endpoint, and they share an 18-calls-per-5-seconds rate limit with "
-    "the outbound dialer that places real customer calls. NEVER loop an "
-    "activity read over a list of leads — you will contend with production "
-    "dialing. For a cross-lead question use list_activities_by_type, which "
-    "costs one call per PAGE rather than one per lead. To check whether a lead "
-    "exists, use a lead lookup, which is local."
+    "Activity reads reach LeadSquared through vahn-crm-service, which queues all "
+    "outbound LSQ traffic through one rate limiter shared with the dialer. The "
+    "queue means you cannot breach the limit — but a burst of calls still sits "
+    "AHEAD of dialer traffic in it, so a fan-out delays real customer calls and "
+    "is slow to return. Never loop an activity read over a list of leads: use "
+    "list_activities_by_type, which costs one call per PAGE rather than one per "
+    "lead. To check whether a lead exists, use a lead lookup, which is local."
 )
 
 EMPTY_ACTIVITIES_TABLE_NOTE = (

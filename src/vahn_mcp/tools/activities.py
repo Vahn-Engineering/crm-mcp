@@ -5,12 +5,15 @@ the dialer that places real customer calls. None of them may be called in a
 loop over leads.
 """
 
-from vahn_mcp import domain
+from vahn_mcp import catalogue, domain
 from vahn_mcp.crm_client import crm
 from vahn_mcp.tools._shared import api_error, envelope_footer
 
 
-async def get_activity_types(event_type: str | None = "custom") -> str:
+async def get_activity_types(
+    event_type: str | None = "custom",
+    refresh: bool = False,
+) -> str:
     """List the LeadSquared activity-type catalogue: which numeric event codes exist
     and what each one means. Call this before writing an activity or interpreting an
     event code — codes hardcoded elsewhere in this server are contradicted by the CRM
@@ -23,18 +26,31 @@ async def get_activity_types(event_type: str | None = "custom") -> str:
     Args:
         event_type: "custom" (VAHN's own types — the default and usually what you
             want), "email", "web", or "revenue". Pass None for the whole catalogue.
+        refresh: Force a refetch instead of using the cached catalogue. Only needed
+            if someone has just changed activity configuration in LeadSquared.
     """
-    try:
-        data = await crm.get_activity_types(event_type=event_type)
-    except Exception as e:
-        return api_error(e, relay=True)
+    if event_type == "custom":
+        # Served from the process cache: the catalogue changes only when someone
+        # edits LSQ config, and every fetch occupies the service's outbound queue.
+        types, provenance = await catalogue.get_activity_types(
+            force_refresh=refresh
+        )
+        if not types:
+            return (f"Activity catalogue {provenance}. Do not fall back to codes "
+                    f"hardcoded elsewhere in this server — the CRM API contract "
+                    f"contradicts them. Say the catalogue is unavailable instead.")
+    else:
+        try:
+            data = await crm.get_activity_types(event_type=event_type)
+        except Exception as e:
+            return api_error(e, relay=True)
+        types = data.get("activityTypes") or []
+        provenance = "fetched live"
+        if not types:
+            scope = f" for event type '{event_type}'" if event_type else ""
+            return f"No activity types returned{scope}."
 
-    types = data.get("activityTypes") or []
-    if not types:
-        scope = f" for event type '{event_type}'" if event_type else ""
-        return f"No activity types returned{scope}."
-
-    lines = [f"**Activity types** ({data.get('total', len(types))})", ""]
+    lines = [f"**Activity types** ({len(types)})  _({provenance})_", ""]
     for t in types:
         code = t.get("activityEvent")
         name = t.get("eventName") or t.get("displayName") or "(unnamed)"
@@ -226,7 +242,13 @@ def _render_rows(rows: list[dict], *, cross_lead: bool = False) -> list[str]:
     field is treated as optional rather than assumed present."""
     out = []
     for a in rows:
-        name = a.get("eventName") or f"(code {a.get('eventCode', '?')})"
+        # LSQ omits eventName in cross-lead mode; fill it from the cached
+        # catalogue when we have it rather than showing a bare code.
+        name = a.get("eventName")
+        if not name:
+            code = a.get("eventCode")
+            resolved = catalogue.resolve_code(code) if code is not None else None
+            name = resolved or f"(code {code if code is not None else '?'})"
         head = f"- **{name}** — {a.get('createdOn', '-')}"
         if a.get("ownerName"):
             head += f", by {a['ownerName']}"

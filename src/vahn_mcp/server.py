@@ -49,7 +49,7 @@ from vahn_mcp.tools.opportunities import list_stale_opportunities, get_pipeline_
 from vahn_mcp.tools.timeline import get_lead_timeline
 from vahn_mcp.tools.team import get_team_summary
 from vahn_mcp.tools.search import search_leads
-from vahn_mcp.tools.write import create_followup_task, log_activity, get_lead_details_from_lsq
+from vahn_mcp.tools.write import create_followup_task, log_activity
 from vahn_mcp.tools.reporting import (
     get_opportunities_by_status,
     get_opportunities_by_stage,
@@ -156,22 +156,28 @@ moves an opportunity into them, so those counts are "what reps have recorded", n
 is actually paying". The Partial/Full split reflects whether the customer's subscription
 payment covers part of their fleet or all of it.
 
-## Activity reads hit LeadSquared, and share a limiter with the dialer
+## Activity reads queue behind the dialer
 
-`get_activity_types`, `get_lead_activities`, `get_opportunity_activities`,
-`list_activities_by_type`, `get_activity_details` and the activity portion of
-`get_lead_timeline` all relay live to LeadSquared. They share an
-18-calls-per-5-seconds rate limit with the outbound dialer that places real customer
-calls.
+`get_lead_activities`, `get_opportunity_activities`, `list_activities_by_type`,
+`get_activity_details` and the activity portion of `get_lead_timeline` reach
+LeadSquared through vahn-crm-service, which pushes all outbound LSQ traffic through a
+single queue shared with the dialer that places real customer calls.
+
+The queue means you cannot breach the rate limit. It does not mean fan-out is free:
+a burst of calls sits ahead of dialer traffic in that queue, so it delays real calls
+and is slow to return.
 
 **Never loop an activity read across a list of leads.** For a question spanning many
 leads use `list_activities_by_type` with an explicit date window — one call per page
 instead of one per lead — then correlate by `prospectId` using local lookups. To check
 whether a lead exists, use `get_lead_record`, which is local.
 
+This server never calls LeadSquared directly; it holds no LSQ credentials. If you need
+something only LeadSquared has, say so rather than looking for a way around.
+
 Activity event codes hardcoded in this server's docstrings are contradicted by the CRM
-API contract. Resolve any code through `get_activity_types` before writing an activity,
-and cache the answer for the conversation.
+API contract. `get_activity_types` is the only authority — it is cached per process, so
+calling it is cheap and you should never work from a remembered code.
 
 ## The activity table is empty — two figures measure nothing
 
@@ -240,7 +246,6 @@ mcp.tool()(get_team_summary)
 mcp.tool()(search_leads)
 mcp.tool()(create_followup_task)
 mcp.tool()(log_activity)
-mcp.tool()(get_lead_details_from_lsq)
 
 # -- Reporting snapshots --
 mcp.tool()(get_opportunities_by_status)

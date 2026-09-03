@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime, timedelta
 
-from vahn_mcp import domain
+from vahn_mcp import catalogue, domain
 from vahn_mcp.crm_client import crm
 
 
@@ -223,11 +223,6 @@ async def _fetch_live() -> tuple[dict | None, str, list | None]:
 
 
 async def _fetch_catalogue() -> list | None:
-    """Fetch the LSQ activity catalogue, or None if unavailable."""
-    try:
-        data = await crm.get_activity_types(event_type="custom")
-    except Exception:
-        return None
-    if not data:
-        return None
-    return data.get("activityTypes") or None
+    """Read the LSQ activity catalogue from the shared process cache."""
+    types, _ = await catalogue.get_activity_types()
+    return types
