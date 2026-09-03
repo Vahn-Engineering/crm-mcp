@@ -278,9 +278,9 @@ SEVERITY_MISMATCH_NOTE = (
 DATA_QUALITY_NOTES = [
     EMPTY_ACTIVITIES_TABLE_NOTE,
     "Lead status_code reads ~94% '0' because the wrong column is being read — "
-    "the field is not genuinely empty. Until vahn-crm-service is corrected, "
-    "get_leads_by_status_code returns meaningless buckets: do not use it to "
-    "answer questions about lead status, and use contact stage instead.",
+    "the field is not genuinely empty. The tool that exposed it has been "
+    "removed rather than left to return one meaningless bucket. Answer "
+    "lead-status questions with contact stage instead.",
     CONTACT_STAGE_NOTE,
     STAGE_ENDASH_NOTE,
     ACTIVITY_CODE_CONFLICT_NOTE,

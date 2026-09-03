@@ -50,12 +50,10 @@ from vahn_mcp.tools.timeline import get_lead_timeline
 from vahn_mcp.tools.team import get_team_summary
 from vahn_mcp.tools.search import search_leads
 from vahn_mcp.tools.write import create_followup_task, log_activity, get_lead_details_from_lsq
-# from vahn_mcp.tools.lsq_users import get_lsq_users  # endpoint not live yet
 from vahn_mcp.tools.reporting import (
     get_opportunities_by_status,
     get_opportunities_by_stage,
     get_leads_by_contact_stage,
-    get_leads_by_status_code,
 )
 from vahn_mcp.tools.escalation import (
     get_leads_without_followup,
@@ -190,7 +188,7 @@ through the LeadSquared relay tools above.
   `get_monitoring_opportunities_by_status`, which uses a derived flag covering both.
 - **Lead status_code reads the wrong column**, so ~94% of leads bucket as "0". The
   field is not genuinely empty — it is being read incorrectly. Do not use
-  `get_leads_by_status_code` for anything until that is fixed; use contact stage.
+  lead status at all until that is fixed; use contact stage instead.
 - **Contact stages "Database" and "Unknown" are bad data**, not real stages. Exclude
   them from breakdowns and never describe a lead as being in them. They are why
   contact-stage totals do not reconcile against opportunity counts.
@@ -243,13 +241,11 @@ mcp.tool()(search_leads)
 mcp.tool()(create_followup_task)
 mcp.tool()(log_activity)
 mcp.tool()(get_lead_details_from_lsq)
-# mcp.tool()(get_lsq_users)  # endpoint not live yet
 
 # -- Reporting snapshots --
 mcp.tool()(get_opportunities_by_status)
 mcp.tool()(get_opportunities_by_stage)
 mcp.tool()(get_leads_by_contact_stage)
-mcp.tool()(get_leads_by_status_code)
 
 # -- Escalation & risk --
 mcp.tool()(get_leads_without_followup)

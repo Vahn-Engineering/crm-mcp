@@ -110,12 +110,6 @@ class CrmClient:
             r.raise_for_status()
             return r.json()
 
-    async def get_lsq_users(self) -> dict:
-        async with self._client() as c:
-            r = await c.get("/api/read/lsq-users")
-            r.raise_for_status()
-            return r.json()
-
     # -- Reporting views --
 
     async def get_opportunities_by_status(self) -> dict:
@@ -133,12 +127,6 @@ class CrmClient:
     async def get_leads_by_contact_stage(self) -> dict:
         async with self._client() as c:
             r = await c.get("/api/read/leads-by-contact-stage")
-            r.raise_for_status()
-            return r.json()
-
-    async def get_leads_by_status_code(self) -> dict:
-        async with self._client() as c:
-            r = await c.get("/api/read/leads-by-status-code")
             r.raise_for_status()
             return r.json()
 

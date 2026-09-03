@@ -59,19 +59,3 @@ async def get_leads_by_contact_stage() -> str:
         lines.append(f"  {stage}: {count}")
 
     return "\n".join(lines)
-
-
-async def get_leads_by_status_code() -> str:
-    """Get a breakdown of leads/contacts by their status code."""
-    data = await crm.get_leads_by_status_code()
-    by_code = data.get("byStatusCode", {})
-
-    if not by_code:
-        return "No lead data available."
-
-    total = data.get("total", sum(by_code.values()))
-    lines = [f"**Leads by Status Code** ({total} total)", ""]
-    for code, count in by_code.items():
-        lines.append(f"  {code}: {count}")
-
-    return "\n".join(lines)
