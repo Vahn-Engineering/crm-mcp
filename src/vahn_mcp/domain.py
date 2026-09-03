@@ -36,6 +36,39 @@ OPPORTUNITY_STAGES: list[dict] = [
     {"rank": None, "name": "Closed - Lost", "is_lost": True},
 ]
 
+# Stage names contain EN-DASHES (U+2013), not hyphens. A hyphen silently
+# matches nothing and returns an empty page, indistinguishable from a genuinely
+# empty stage. normalise_stage() repairs the common mistake.
+
+STAGE_ENDASH_NOTE = (
+    "Opportunity stage names use an en-dash (\u2013), not a hyphen: "
+    "'Paying Customer \u2013 Full Fleet'. Filtering with a hyphen matches "
+    "nothing and returns an empty result that looks like a real answer. Always "
+    "copy stage names from get_business_context rather than retyping them."
+)
+
+
+def normalise_stage(value: str | None) -> str | None:
+    """Repair a hyphen typed where a stage name needs an en-dash.
+
+    Matches case-insensitively against the known stage list with dashes
+    neutralised, and returns the canonical spelling. Unknown values pass
+    through untouched so the API stays the authority on what is valid.
+    """
+    if not value or not value.strip():
+        return value
+
+    def key(v: str) -> str:
+        return (v.replace("\u2013", "-").replace("\u2014", "-")
+                 .replace("  ", " ").strip().casefold())
+
+    target = key(value)
+    for stage in OPPORTUNITY_STAGES:
+        if key(stage["name"]) == target:
+            return stage["name"]
+    return value
+
+
 # CONFIRMED: the Partial/Full split is decided by the subscription payment the
 # customer has made — partial or full — not by truck count or contract type.
 FLEET_SPLIT_NOTE = (
@@ -78,12 +111,15 @@ CONTACT_STAGE_NOTE = (
 )
 
 # -- Activity event codes --
-# Fallback only. An activity catalogue endpoint is being added to
-# vahn-crm-service; once live it is authoritative and this list is a stopgap.
-# Code 202 is deliberately absent — it was never documented and the catalogue
-# will settle whether it exists.
+# DO NOT TRUST the codes below. They come from a docstring in write.py, and the
+# CRM read API contract contradicts them: its examples show event code 164 as
+# "Customer Connect" and 161 as "Home Visit", where the docstring claims 200 is
+# Customer Connect. At most one can be right.
+#
+# /api/read/activity-types is the only authoritative source. Resolve codes from
+# it and cache the result; never hardcode a code read from a sample response.
 
-ACTIVITY_EVENTS_FALLBACK: dict[str, str] = {
+ACTIVITY_EVENTS_UNVERIFIED: dict[str, str] = {
     "200": "Customer Connect",
     "201": "Contacted - Lead Qualification",
     "203": "Demo Done - Outcome",
@@ -91,12 +127,27 @@ ACTIVITY_EVENTS_FALLBACK: dict[str, str] = {
     "205": "First Transaction",
 }
 
+ACTIVITY_CODE_CONFLICT_NOTE = (
+    "The activity codes 200/201/203/204/205 in this server's docstrings are "
+    "CONTRADICTED by the CRM read API contract, which documents 164 as "
+    "'Customer Connect' and 161 as 'Home Visit'. Treat every hardcoded code as "
+    "unverified. Resolve codes through get_activity_types before writing an "
+    "activity, and warn the user if you are about to write one you could not "
+    "resolve. log_activity still defaults to 201, which may be wrong."
+)
+
 DEFAULT_ACTIVITY_EVENT = "201"
+
+# Codes this service writes itself, pinned in VAHN source rather than LSQ config.
+# The catalogue marks these with writtenByVahn: true.
+VAHN_WRITTEN_ACTIVITY_CODES = {
+    "210": "AI Bot Call — written by ElevenLabsWebhookService",
+    "211": "WhatsApp Engagement — written by GupshupLsqActivityScheduler",
+}
 
 # CONFIRMED: stage changes are driven by automations configured inside LSQ,
 # keyed on the activity. The mapping lives in LSQ automation config, not here
-# and not in vahn-crm-service — so no code→stage table in this repo could be
-# trusted. Deliberately not modelled.
+# and not in vahn-crm-service.
 ACTIVITY_AUTOMATION_NOTE = (
     "Logging an activity can move an opportunity's stage, but only where an LSQ "
     "automation is configured for that activity. The mapping lives in LSQ "
@@ -104,6 +155,28 @@ ACTIVITY_AUTOMATION_NOTE = (
     "without any code change here. So: never predict which stage an activity "
     "will produce, and never report that a lead advanced because you logged "
     "one. Re-read the opportunity afterwards to see what actually happened."
+)
+
+# -- Activities are a live LSQ relay, not a local read --
+
+ACTIVITY_RELAY_NOTE = (
+    "Activity reads relay live to LeadSquared. They are slow relative to every "
+    "other endpoint, and they share an 18-calls-per-5-seconds rate limit with "
+    "the outbound dialer that places real customer calls. NEVER loop an "
+    "activity read over a list of leads — you will contend with production "
+    "dialing. For a cross-lead question use list_activities_by_type, which "
+    "costs one call per PAGE rather than one per lead. To check whether a lead "
+    "exists, use a lead lookup, which is local."
+)
+
+EMPTY_ACTIVITIES_TABLE_NOTE = (
+    "The local lsq_activities table holds ZERO rows — the Activity_Post_Create "
+    "webhook was never configured on the LSQ side. Consequences: "
+    "get_team_summary's 'Activities' column and get_rep_scorecard's activity "
+    "totals are always 0 and measure nothing, so never present them as a "
+    "measurement or compare reps on them. The older lead-timeline endpoint has "
+    "a permanently empty activity section. Real activity data is only reachable "
+    "through the LSQ relay tools."
 )
 
 # -- AI call dispositions --
@@ -203,9 +276,44 @@ SEVERITY_MISMATCH_NOTE = (
 # -- Data quality --
 
 DATA_QUALITY_NOTES = [
+    EMPTY_ACTIVITIES_TABLE_NOTE,
     "Lead status_code reads ~94% '0' because the wrong column is being read — "
     "the field is not genuinely empty. Until vahn-crm-service is corrected, "
     "get_leads_by_status_code returns meaningless buckets: do not use it to "
     "answer questions about lead status, and use contact stage instead.",
     CONTACT_STAGE_NOTE,
+    STAGE_ENDASH_NOTE,
+    ACTIVITY_CODE_CONFLICT_NOTE,
+]
+
+# -- Record-level read API semantics --
+# Behaviours that produce wrong answers rather than errors if ignored.
+
+API_SEMANTICS = [
+    "Paging: size defaults to 50 and is HARD CAPPED at 200 — a larger value is "
+    "silently clamped, not rejected. There is no unbounded read. To cover a "
+    "full set, page until hasNext is false, and say so if you stopped early.",
+    "Sort fields are allow-listed per entity. An unrecognised field returns a "
+    "400 whose message names every valid field — read it and retry rather than "
+    "giving up.",
+    "Blank and whitespace-only filter values are IGNORED, not matched as empty. "
+    "String filters are exact and case-SENSITIVE unless documented otherwise.",
+    "Task filtering by lead uses a LEFT join: a task whose lead was never "
+    "mirrored locally is excluded when you filter by prospect, but still "
+    "reachable by any other filter, and arrives with no prospectId or company.",
+    "The task 'overdue' filter is tri-state: true means not-Completed AND past "
+    "due; false means everything else; omitting it applies no due-date "
+    "predicate at all. Omitted is not the same as false.",
+    "Call records have NO lead foreign key — leads are correlated by phone at "
+    "read time. A number matching several contacts returns ambiguous: true "
+    "with matchCount. Treat an ambiguous match as a hint, never as an "
+    "attribution, and say so when reporting it.",
+    "Activity timestamps come straight from LSQ as '2020-10-16 05:57:37' — a "
+    "space, not a T — unlike every other date the API returns. Do not assume "
+    "one format across sources.",
+    "Absent and null mean the same thing: null fields are omitted from "
+    "responses entirely, so a missing key is not an error.",
+    "In an opportunity's stage history the FINAL row has no daysInStage, "
+    "because that stage is still open. Do not compute now-minus-changedAt for "
+    "it and present it like a completed stage.",
 ]

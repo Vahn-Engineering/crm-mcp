@@ -77,31 +77,37 @@ async def get_business_context() -> str:
     lines += ["", "## Activity event codes", ""]
     if catalogue:
         for act in catalogue:
-            state = "" if act.get("active", True) else "  _(inactive — do not emit)_"
-            default = ("  _(default)_" if act["code"] == domain.DEFAULT_ACTIVITY_EVENT
-                       else "")
-            lines.append(f"- **{act['code']} — {act['name']}**{default}{state}")
-            for field, values in (act.get("fields") or {}).items():
-                lines.append(f"    `{field}`: {', '.join(values)}")
-        lines += ["", "> Source: live activity catalogue. These picklist values are "
-                      "authoritative — use them verbatim."]
-    else:
-        for code, name in domain.ACTIVITY_EVENTS_FALLBACK.items():
-            default = ("  _(default)_" if code == domain.DEFAULT_ACTIVITY_EVENT
-                       else "")
-            lines.append(f"- **{code} — {name}**{default}")
+            code = act.get("activityEvent")
+            name = act.get("eventName") or act.get("displayName") or "(unnamed)"
+            vahn = "  **[written by VAHN]**" if act.get("writtenByVahn") else ""
+            lines.append(f"- **{code} — {name}** "
+                         f"({act.get('eventTypeLabel', '?')}){vahn}")
         lines += [
             "",
-            "> Source: fallback list in domain.py — the activity catalogue endpoint "
-            "is not live yet. This list is incomplete: code 202 is undocumented and "
-            "may or may not exist, and the picklist values below are partial. Prefer "
-            "echoing a value the user supplied over inventing one.",
+            "> Source: live LeadSquared catalogue via get_activity_types — "
+            "authoritative. Match on the numeric code or writtenByVahn, never on "
+            "eventName: the sales team can rename a display name in LSQ at any "
+            "time. Call get_activity_types for descriptions and field picklists.",
         ]
-        lines.append("")
-        for field, values in domain.OPEN_VALUE_FIELDS.items():
-            lines.append(f"- **{field}:** {', '.join(values)} — attested values only.")
+    else:
+        lines.append("Catalogue unavailable — could not reach LeadSquared.")
+        lines += [
+            "",
+            "> The codes below come from a docstring and are CONTRADICTED by the "
+            "CRM API contract (which documents 164 as Customer Connect, not 200). "
+            "Do not write an activity using them without resolving the code "
+            "through get_activity_types first.",
+            "",
+        ]
+        for code, name in domain.ACTIVITY_EVENTS_UNVERIFIED.items():
+            lines.append(f"- {code} — {name}  _(unverified)_")
 
-    lines += ["", f"> {domain.ACTIVITY_AUTOMATION_NOTE}"]
+    lines += ["", "**Codes VAHN writes itself** (pinned in source, not LSQ config):"]
+    for code, desc in domain.VAHN_WRITTEN_ACTIVITY_CODES.items():
+        lines.append(f"- **{code}** — {desc}")
+
+    lines += ["", f"> {domain.ACTIVITY_AUTOMATION_NOTE}",
+              "", f"> {domain.ACTIVITY_RELAY_NOTE}"]
 
     # -- Risk definitions --
     lines += ["", "## Risk and escalation definitions", ""]
@@ -133,6 +139,11 @@ async def get_business_context() -> str:
         lines.append(f"- **{term}:** "
                      f"{definition or '_undefined — ask the user, do not guess_'}")
 
+    # -- API semantics --
+    lines += ["", "## Read API behaviours that produce wrong answers silently", ""]
+    for note in domain.API_SEMANTICS:
+        lines.append(f"- {note}")
+
     # -- Data quality --
     lines += ["", "## Data quality warnings", ""]
     for note in domain.DATA_QUALITY_NOTES:
@@ -142,65 +153,35 @@ async def get_business_context() -> str:
 
 
 async def _fetch_live() -> tuple[dict | None, str, list | None]:
-    """Resolve live vocabulary and the activity catalogue, best source first.
+    """Resolve the live stage list, status counts, rep roster and activity catalogue.
 
-    Stage/status/rep chain:
-      1. /api/read/business-context — one call, can include zero-count stages.
-      2. The reporting views — opportunities-by-stage carries stageRank and
-         isLost from SQL, so ordering is authoritative rather than mirrored.
-         Only sees stages that currently hold records.
-      3. Nothing — the authored layer renders, flagged as possibly stale.
+    All four come from endpoints that exist. The stage list carries stageRank
+    straight from a SQL view, so pipeline ordering is authoritative rather than
+    mirrored from domain.py. The roster comes from /api/read/users, falling back
+    to team-summary, which only sees reps active in the window.
 
-    The activity catalogue resolves independently: a 404 or an error just means
-    the fallback list in domain.py is used.
-
-    Note: the rep roster comes from team-summary, not lsq-users, because
-    /api/read/lsq-users is not live yet (see server.py).
+    The catalogue is a LeadSquared relay and resolves independently — losing it
+    does not cost the rest of the context.
     """
     catalogue_task = asyncio.create_task(_fetch_catalogue())
-
-    try:
-        ctx = await crm.get_business_context()
-    except Exception:
-        ctx = None
-
-    if ctx:
-        reps = ctx.get("reps") or []
-        if reps and isinstance(reps[0], dict):
-            reps = [r["name"] for r in reps if r.get("active", True)]
-        stages = [
-            {
-                "name": st.get("stage") or st.get("name"),
-                "count": st.get("opportunities", 0),
-                "rank": st.get("stageRank"),
-                "is_lost": bool(st.get("isLost")),
-            }
-            for st in (ctx.get("stages") or [])
-        ]
-        return (
-            {
-                "stages": stages,
-                "statusCounts": ctx.get("statusCounts") or {},
-                "reps": sorted(reps),
-            },
-            "/api/read/business-context",
-            await catalogue_task,
-        )
 
     now = datetime.now()
     window_start = now.replace(
         hour=0, minute=0, second=0, microsecond=0
     ) - timedelta(days=90)
 
-    by_stage, by_status, team = await asyncio.gather(
+    by_stage, by_status, users, team = await asyncio.gather(
         crm.get_opportunities_by_stage(),
         crm.get_opportunities_by_status(),
+        crm.list_users(),
         crm.get_team_summary(window_start.isoformat(), now.isoformat()),
         return_exceptions=True,
     )
 
-    if all(isinstance(r, Exception) for r in (by_stage, by_status, team)):
-        return None, "unavailable — vahn-crm-service unreachable", await catalogue_task
+    catalogue = await catalogue_task
+
+    if all(isinstance(r, Exception) for r in (by_stage, by_status, users, team)):
+        return None, "unavailable — vahn-crm-service unreachable", catalogue
 
     derived: dict = {}
     if not isinstance(by_stage, Exception):
@@ -215,20 +196,38 @@ async def _fetch_live() -> tuple[dict | None, str, list | None]:
         ]
     if not isinstance(by_status, Exception):
         derived["statusCounts"] = by_status.get("byStatus", {})
-    if not isinstance(team, Exception):
+
+    roster_source = None
+    if not isinstance(users, Exception):
+        raw = users.get("users") if isinstance(users, dict) else users
+        names = []
+        for u in (raw or []):
+            if isinstance(u, dict):
+                nm = (u.get("name")
+                      or f"{u.get('firstName', '')} {u.get('lastName', '')}".strip())
+                if nm:
+                    names.append(nm)
+        if names:
+            derived["reps"] = sorted(names)
+            roster_source = "/api/read/users (full roster)"
+    if "reps" not in derived and not isinstance(team, Exception):
         derived["reps"] = sorted(
             r["name"] for r in team.get("reps", []) if r.get("name")
         )
+        roster_source = "team-summary, last 90 days only — an idle rep is invisible"
 
-    return derived, "reporting views + team-summary (90d)", await catalogue_task
+    source = "reporting views"
+    if roster_source:
+        source += f"; roster from {roster_source}"
+    return derived, source, catalogue
 
 
 async def _fetch_catalogue() -> list | None:
-    """Fetch the activity catalogue, or None if unavailable."""
+    """Fetch the LSQ activity catalogue, or None if unavailable."""
     try:
-        data = await crm.get_activity_catalogue()
+        data = await crm.get_activity_types(event_type="custom")
     except Exception:
         return None
     if not data:
         return None
-    return data.get("activities") or None
+    return data.get("activityTypes") or None

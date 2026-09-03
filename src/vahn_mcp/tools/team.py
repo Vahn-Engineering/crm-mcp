@@ -35,4 +35,14 @@ async def get_team_summary(
             f"{r['currentlyOverdue']:<10} {r['activitiesLogged']:<10}"
         )
 
+    # Structurally always 0: the local activities table is empty because its
+    # webhook was never configured. Must never read as rep performance.
+    if all(not r.get("activitiesLogged") for r in reps):
+        lines += [
+            "",
+            "> The Activities column is 0 for every rep because the local "
+            "activities table is empty — its webhook was never configured. That "
+            "column measures nothing and must not be used to compare reps.",
+        ]
+
     return "\n".join(lines)

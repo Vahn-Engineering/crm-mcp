@@ -23,6 +23,26 @@ def _patched_build_metadata(*args, **kwargs):
 _auth_routes.build_metadata = _patched_build_metadata
 
 from vahn_mcp.tools.context import get_business_context
+from vahn_mcp.tools.activities import (
+    get_activity_types,
+    get_lead_activities,
+    get_opportunity_activities,
+    list_activities_by_type,
+    get_activity_details,
+)
+from vahn_mcp.tools.calls import search_calls, get_call_details
+from vahn_mcp.tools.call_queue import get_call_queue
+from vahn_mcp.tools.stage_history import (
+    get_stage_changes,
+    get_opportunity_stage_history,
+)
+from vahn_mcp.tools.whatsapp import search_whatsapp_events
+from vahn_mcp.tools.records import (
+    search_opportunities,
+    search_tasks,
+    get_lead_record,
+)
+from vahn_mcp.tools.users import get_user
 from vahn_mcp.tools.followups import list_overdue_followups
 from vahn_mcp.tools.scorecard import get_rep_scorecard
 from vahn_mcp.tools.opportunities import list_stale_opportunities, get_pipeline_snapshot
@@ -138,6 +158,31 @@ moves an opportunity into them, so those counts are "what reps have recorded", n
 is actually paying". The Partial/Full split reflects whether the customer's subscription
 payment covers part of their fleet or all of it.
 
+## Activity reads hit LeadSquared, and share a limiter with the dialer
+
+`get_activity_types`, `get_lead_activities`, `get_opportunity_activities`,
+`list_activities_by_type`, `get_activity_details` and the activity portion of
+`get_lead_timeline` all relay live to LeadSquared. They share an
+18-calls-per-5-seconds rate limit with the outbound dialer that places real customer
+calls.
+
+**Never loop an activity read across a list of leads.** For a question spanning many
+leads use `list_activities_by_type` with an explicit date window — one call per page
+instead of one per lead — then correlate by `prospectId` using local lookups. To check
+whether a lead exists, use `get_lead_record`, which is local.
+
+Activity event codes hardcoded in this server's docstrings are contradicted by the CRM
+API contract. Resolve any code through `get_activity_types` before writing an activity,
+and cache the answer for the conversation.
+
+## The activity table is empty — two figures measure nothing
+
+The local activities table holds zero rows; its webhook was never configured. So
+`get_team_summary`'s Activities column and `get_rep_scorecard`'s activity total are 0
+for every rep, always. **Never present either as a measurement, and never compare reps
+on them.** Both tools now say so in their output. Real activity data is only reachable
+through the LeadSquared relay tools above.
+
 ## Known data traps
 
 - **Lost is stored twice** — `opportunity_status='Lost'` and
@@ -162,6 +207,20 @@ require a `prospect_id` — `search_leads`, `get_lead_timeline`, and
 Use only picklist values from the activity catalogue in get_business_context. Where the
 catalogue is unavailable, echo a value the user supplied rather than inventing one — a
 wrong value written to LeadSquared is worse than a missing one.
+
+## Paging and empty results
+
+List tools page: `size` defaults to 50 and is hard-capped at 200, silently clamped
+above that. There is no unbounded read. When output says more results exist, either
+page on or state plainly that you have not seen them all — never imply a partial page
+is the whole set.
+
+A `400` from these endpoints names every valid value in its message, so a wrong `sort`
+field is self-correcting: read the error and retry rather than giving up.
+
+Stage names use en-dashes, not hyphens. Tools correct a hyphen where it matches a known
+stage, but a stage name that matches nothing returns an empty page that is
+indistinguishable from an empty stage — copy names from `get_business_context`.
 
 ## Reporting
 
@@ -210,6 +269,33 @@ mcp.tool()(get_new_opportunities_count)
 mcp.tool()(get_won_opportunities)
 mcp.tool()(get_workload_distribution)
 mcp.tool()(get_call_outcome_breakdown)
+
+# -- Activities (LSQ relay — rate-limited, shared with the dialer) --
+mcp.tool()(get_activity_types)
+mcp.tool()(get_lead_activities)
+mcp.tool()(get_opportunity_activities)
+mcp.tool()(list_activities_by_type)
+mcp.tool()(get_activity_details)
+
+# -- AI bot calls (local, richer than LSQ activity 210) --
+mcp.tool()(search_calls)
+mcp.tool()(get_call_details)
+
+# -- Dialer queue --
+mcp.tool()(get_call_queue)
+
+# -- Stage history --
+mcp.tool()(get_stage_changes)
+mcp.tool()(get_opportunity_stage_history)
+
+# -- WhatsApp events --
+mcp.tool()(search_whatsapp_events)
+
+# -- Record-level search --
+mcp.tool()(search_opportunities)
+mcp.tool()(search_tasks)
+mcp.tool()(get_lead_record)
+mcp.tool()(get_user)
 
 # -- Monitoring --
 mcp.tool()(get_critical_overdue_tasks)
