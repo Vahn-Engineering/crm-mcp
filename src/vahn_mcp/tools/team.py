@@ -1,11 +1,12 @@
 """Team summary tool."""
 
+from vahn_mcp import domain
 from vahn_mcp.crm_client import crm
 from vahn_mcp.period import resolve_period
 
 
 async def get_team_summary(
-    period: str = "this_week",
+    period: domain.Period = "this_week",
 ) -> str:
     """Get a summary of all reps' activity — tasks created/completed, overdue count, activities logged.
 
@@ -33,5 +34,15 @@ async def get_team_summary(
             f"{r['name']:<25} {r['tasksCreated']:<8} {r['tasksCompleted']:<8} "
             f"{r['currentlyOverdue']:<10} {r['activitiesLogged']:<10}"
         )
+
+    # Structurally always 0: the local activities table is empty because its
+    # webhook was never configured. Must never read as rep performance.
+    if all(not r.get("activitiesLogged") for r in reps):
+        lines += [
+            "",
+            "> The Activities column is 0 for every rep because the local "
+            "activities table is empty — its webhook was never configured. That "
+            "column measures nothing and must not be used to compare reps.",
+        ]
 
     return "\n".join(lines)

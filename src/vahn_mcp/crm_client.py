@@ -74,45 +74,11 @@ class CrmClient:
             r.raise_for_status()
             return r.json()
 
-    async def get_lead_timeline(self, prospect_id: str) -> dict:
-        async with self._client() as c:
-            r = await c.get(f"/api/read/lead-timeline/{prospect_id}")
-            r.raise_for_status()
-            return r.json()
-
     async def get_team_summary(self, start: str, end: str) -> dict:
         async with self._client() as c:
             r = await c.get(
                 "/api/read/team-summary", params={"start": start, "end": end}
             )
-            r.raise_for_status()
-            return r.json()
-
-    async def search_leads(
-        self,
-        contact_type: str | None = None,
-        stage: str | None = None,
-        phone: str | None = None,
-        company: str | None = None,
-        limit: int = 50,
-    ) -> dict:
-        params: dict = {"limit": limit}
-        if contact_type:
-            params["contactType"] = contact_type
-        if stage:
-            params["stage"] = stage
-        if phone:
-            params["phone"] = phone
-        if company:
-            params["company"] = company
-        async with self._client() as c:
-            r = await c.get("/api/read/search-leads", params=params)
-            r.raise_for_status()
-            return r.json()
-
-    async def get_lsq_users(self) -> dict:
-        async with self._client() as c:
-            r = await c.get("/api/read/lsq-users")
             r.raise_for_status()
             return r.json()
 
@@ -133,12 +99,6 @@ class CrmClient:
     async def get_leads_by_contact_stage(self) -> dict:
         async with self._client() as c:
             r = await c.get("/api/read/leads-by-contact-stage")
-            r.raise_for_status()
-            return r.json()
-
-    async def get_leads_by_status_code(self) -> dict:
-        async with self._client() as c:
-            r = await c.get("/api/read/leads-by-status-code")
             r.raise_for_status()
             return r.json()
 
@@ -304,6 +264,157 @@ class CrmClient:
     async def get_monitoring_opportunities_summary(self) -> dict:
         async with self._client() as c:
             r = await c.get("/monitoring/opportunities/summary")
+            r.raise_for_status()
+            return r.json()
+
+    # -- Record-level read API (branch feature/mcp-read-apis) --
+    # Every list endpoint returns the same envelope: content/page/size/
+    # totalElements/totalPages/hasNext/hasPrevious/sort. size caps at 200.
+
+    @staticmethod
+    def _params(**kw) -> dict:
+        """Drop None and blank values — the API ignores blanks anyway."""
+        return {k: v for k, v in kw.items()
+                if v is not None and not (isinstance(v, str) and not v.strip())}
+
+    async def list_leads(self, **filters) -> dict:
+        async with self._client() as c:
+            r = await c.get("/api/read/leads", params=self._params(**filters))
+            r.raise_for_status()
+            return r.json()
+
+    async def get_lead(self, prospect_id: str) -> dict:
+        async with self._client() as c:
+            r = await c.get(f"/api/read/leads/{prospect_id}")
+            r.raise_for_status()
+            return r.json()
+
+    async def resolve_leads(self, payload: dict) -> dict:
+        """Batch-resolve phones/names/companies to leads. One query regardless of
+        batch size; 100 values max across all three arrays."""
+        async with self._client() as c:
+            r = await c.post("/api/read/leads/resolve", json=payload)
+            r.raise_for_status()
+            return r.json()
+
+    async def list_opportunities(self, **filters) -> dict:
+        async with self._client() as c:
+            r = await c.get("/api/read/opportunities", params=self._params(**filters))
+            r.raise_for_status()
+            return r.json()
+
+    async def list_tasks(self, **filters) -> dict:
+        async with self._client() as c:
+            r = await c.get("/api/read/tasks", params=self._params(**filters))
+            r.raise_for_status()
+            return r.json()
+
+    # -- Activities: these RELAY TO LEADSQUARED. Rate-limited, shared with the
+    # -- dialer. Never call in a loop over leads. 502 = LSQ unhappy (retry),
+    # -- 503 = LSQ disabled in this environment (do not retry).
+
+    async def get_activity_types(
+        self, event_type: str | None = None, include_schema: bool = False
+    ) -> dict:
+        """The activity-type catalogue. Relays to LSQ. Cache on the caller side."""
+        async with self._client() as c:
+            r = await c.get(
+                "/api/read/activity-types",
+                params=self._params(eventType=event_type,
+                                    includeSchema=include_schema or None),
+            )
+            r.raise_for_status()
+            return r.json()
+
+    async def list_activities(self, **filters) -> dict:
+        """Relays to LSQ. One call per page. Never loop this per lead."""
+        async with self._client() as c:
+            r = await c.get("/api/read/activities", params=self._params(**filters))
+            r.raise_for_status()
+            return r.json()
+
+    async def get_activity(self, activity_id: str) -> dict:
+        """Relays to LSQ. Returns fields keyed by display name with schemaName."""
+        async with self._client() as c:
+            r = await c.get(f"/api/read/activities/{activity_id}")
+            r.raise_for_status()
+            return r.json()
+
+    # -- Calls: local, and richer than LSQ activity 210 --
+
+    async def list_calls(self, **filters) -> dict:
+        async with self._client() as c:
+            r = await c.get("/api/read/calls", params=self._params(**filters))
+            r.raise_for_status()
+            return r.json()
+
+    async def get_call(self, conversation_id: str) -> dict:
+        async with self._client() as c:
+            r = await c.get(f"/api/read/calls/{conversation_id}")
+            r.raise_for_status()
+            return r.json()
+
+    # -- Call queue: why a lead has or hasn't been called --
+
+    async def list_call_queue(self, **filters) -> dict:
+        async with self._client() as c:
+            r = await c.get("/api/read/call-queue", params=self._params(**filters))
+            r.raise_for_status()
+            return r.json()
+
+    # -- WhatsApp events --
+
+    async def list_whatsapp_events(self, **filters) -> dict:
+        async with self._client() as c:
+            r = await c.get("/api/read/whatsapp-events",
+                            params=self._params(**filters))
+            r.raise_for_status()
+            return r.json()
+
+    # -- Stage history --
+
+    async def list_stage_history(self, **filters) -> dict:
+        async with self._client() as c:
+            r = await c.get("/api/read/stage-history", params=self._params(**filters))
+            r.raise_for_status()
+            return r.json()
+
+    async def get_opportunity_stage_history(self, opportunity_id: str) -> dict:
+        """Unpaged, oldest-first, with daysInStage precomputed."""
+        async with self._client() as c:
+            r = await c.get(
+                f"/api/read/opportunities/{opportunity_id}/stage-history"
+            )
+            r.raise_for_status()
+            return r.json()
+
+    # -- Users --
+
+    async def get_user(self, user_id: str) -> dict:
+        """Accepts an LSQ user id OR an email address. Includes a workload block."""
+        async with self._client() as c:
+            r = await c.get(f"/api/read/users/{user_id}")
+            r.raise_for_status()
+            return r.json()
+
+    async def list_users(self) -> dict:
+        """Flat roster. This is the real endpoint — /api/read/lsq-users never shipped."""
+        async with self._client() as c:
+            r = await c.get("/api/read/users")
+            r.raise_for_status()
+            return r.json()
+
+    # -- Unified timeline: prefer over /api/read/lead-timeline/{id}, whose
+    # -- activity section is permanently empty (lsq_activities has zero rows).
+
+    async def get_lead_timeline_merged(
+        self, prospect_id: str, sources: str | None = None, limit: int = 100
+    ) -> dict:
+        async with self._client() as c:
+            r = await c.get(
+                f"/api/read/leads/{prospect_id}/timeline",
+                params=self._params(sources=sources, limit=limit),
+            )
             r.raise_for_status()
             return r.json()
 

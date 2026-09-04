@@ -1,11 +1,12 @@
 """Lead analytics tools."""
 
+from vahn_mcp import domain
 from vahn_mcp.crm_client import crm
 from vahn_mcp.period import resolve_period
 
 
 async def get_new_leads_count(
-    period: str = "this_week",
+    period: domain.Period = "this_week",
 ) -> str:
     """Get the count of new leads created in a time period.
 
@@ -23,7 +24,7 @@ async def get_new_leads_count(
 
 
 async def get_new_leads_by_source(
-    period: str = "this_week",
+    period: domain.Period = "this_week",
 ) -> str:
     """Get new leads broken down by source for a time period.
 

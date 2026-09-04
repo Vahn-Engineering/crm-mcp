@@ -1,12 +1,13 @@
 """Rep scorecard tool."""
 
+from vahn_mcp import domain
 from vahn_mcp.crm_client import crm
 from vahn_mcp.period import resolve_period
 
 
 async def get_rep_scorecard(
     rep_name: str,
-    period: str = "this_week",
+    period: domain.Period = "this_week",
 ) -> str:
     """Get a sales rep's performance scorecard.
 
@@ -35,11 +36,24 @@ async def get_rep_scorecard(
         f"  Currently overdue: {tasks.get('currentlyOverdue', 0)}",
         "",
         "**Activities**",
-        f"  Total logged: {activities.get('total', 0)}",
+        f"  Total logged: {activities.get('total', 0)}"
+        + ("  <- NOT A MEASUREMENT" if not activities.get("total") else ""),
     ]
 
     if by_type:
         for event_name, count in by_type.items():
             lines.append(f"  {event_name}: {count}")
+
+    # The local activities table holds zero rows, so this figure is structurally
+    # always 0 and measures nothing. Never let it read as rep performance.
+    if not activities.get("total"):
+        lines += [
+            "",
+            "> The activity count above is 0 for every rep, always: the local "
+            "activities table is empty because its webhook was never configured. "
+            "It is not a measurement of this rep's work and must not be reported "
+            "as one. Real activity data is only available per-lead via "
+            "get_lead_activities, which reads LeadSquared directly.",
+        ]
 
     return "\n".join(lines)
